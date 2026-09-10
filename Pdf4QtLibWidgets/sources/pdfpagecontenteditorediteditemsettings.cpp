@@ -37,6 +37,43 @@
 namespace pdf
 {
 
+namespace
+{
+
+qsizetype getLeadingTextCommandLength(const QString& text)
+{
+    const QStringList commandTags =
+    {
+        "tr", "ts", "tc", "tw", "tl",
+        "tz", "tk", "tf", "tpos", "tmatrix"
+    };
+
+    qsizetype offset = 0;
+
+    while (offset < text.size() && text.at(offset) == '<')
+    {
+        const qsizetype tagEnd = text.indexOf("/>", offset);
+        const qsizetype nameEnd = text.indexOf(' ', offset);
+
+        if (tagEnd == -1 || nameEnd == -1 || nameEnd > tagEnd)
+        {
+            break;
+        }
+
+        const QString tagName = text.mid(offset + 1, nameEnd - offset - 1);
+        if (!commandTags.contains(tagName))
+        {
+            break;
+        }
+
+        offset = tagEnd + 2;
+    }
+
+    return offset;
+}
+
+}   // anonymous namespace
+
 PDFPageContentEditorEditedItemSettings::PDFPageContentEditorEditedItemSettings(QWidget* parent) :
     QWidget(parent),
     ui(new Ui::PDFPageContentEditorEditedItemSettings)
@@ -111,6 +148,7 @@ void PDFPageContentEditorEditedItemSettings::loadFromElement(PDFPageContentEleme
     {
         ui->tabWidget->addTab(ui->textTab, tr("Text"));
         QString text = textElement->getItemsAsText();
+        text.remove(0, getLeadingTextCommandLength(text));
         ui->plainTextEdit->setPlainText(text);
     }
 
@@ -259,7 +297,10 @@ void PDFPageContentEditorEditedItemSettings::saveToElement(PDFPageContentElement
 
     if (PDFEditedPageContentElementText* textElement = editedElement->getElement()->asText())
     {
-        textElement->setItemsAsText(ui->plainTextEdit->toPlainText());
+        QString originalText = textElement->getItemsAsText();
+        const qsizetype prefixLength = getLeadingTextCommandLength(originalText);
+
+        textElement->setItemsAsText(originalText.left(prefixLength) + ui->plainTextEdit->toPlainText());
     }
 
     if (PDFEditedPageContentElementPath* pathElement = editedElement->getElement()->asPath())
