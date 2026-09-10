@@ -110,49 +110,8 @@ void PDFPageContentEditorEditedItemSettings::loadFromElement(PDFPageContentEleme
     if (PDFEditedPageContentElementText* textElement = editedElement->getElement()->asText())
     {
         ui->tabWidget->addTab(ui->textTab, tr("Text"));
-
-        QString text;
-        PDFPageContentProcessorState state = textElement->getState();
-        state.setStateFlags(PDFPageContentProcessorState::StateFlags());
-        PDFReal currentY = state.getTextMatrix().dy();
-        bool textStarted = false;
-
-        for (const PDFEditedPageContentElementText::Item& item : textElement->getItems())
-        {
-            if (item.isText)
-            {
-                for (const TextSequenceItem& textItem : item.textSequence.items)
-                {
-                    if ((textItem.isCharacter() || textItem.isContentStream()) && !textItem.character.isNull())
-                    {
-                        text += textItem.character;
-                        textStarted = true;
-                    }
-                }
-            }
-            else if (item.isUpdateGraphicState)
-            {
-                PDFPageContentProcessorState newState = state;
-                newState.setStateFlags(PDFPageContentProcessorState::StateFlags());
-                newState.setState(item.state);
-
-                if (newState.getStateFlags().testFlag(PDFPageContentProcessorState::StateTextMatrix))
-                {
-                    PDFReal newY = newState.getTextMatrix().dy();
-                    if (textStarted && !qFuzzyIsNull(newY - currentY))
-                    {
-                        text += '\n';
-                    }
-                    currentY = newY;
-                }
-
-                state = newState;
-                state.setStateFlags(PDFPageContentProcessorState::StateFlags());
-            }
-        }
-
+        QString text = textElement->getItemsAsText();
         ui->plainTextEdit->setPlainText(text);
-        ui->plainTextEdit->document()->setModified(false);
     }
 
     if (editedElement->getElement()->asText() || editedElement->getElement()->asPath())
@@ -300,22 +259,7 @@ void PDFPageContentEditorEditedItemSettings::saveToElement(PDFPageContentElement
 
     if (PDFEditedPageContentElementText* textElement = editedElement->getElement()->asText())
     {
-        if (ui->plainTextEdit->document()->isModified())
-        {
-            std::vector<PDFEditedPageContentElementText::Item> prefixItems;
-            for (const PDFEditedPageContentElementText::Item& item : textElement->getItems())
-            {
-                if (item.isText)
-                {
-                    break;
-                }
-                prefixItems.push_back(item);
-            }
-
-            QString text = PDFEditedPageContentElementText::createItemsAsText(textElement->getState(), prefixItems);
-            text += ui->plainTextEdit->toPlainText().toHtmlEscaped();
-            textElement->setItemsAsText(text);
-        }
+        textElement->setItemsAsText(ui->plainTextEdit->toPlainText());
     }
 
     if (PDFEditedPageContentElementPath* pathElement = editedElement->getElement()->asPath())
