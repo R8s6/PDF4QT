@@ -830,6 +830,7 @@ void PDFPageContentEditorContentStreamBuilder::writeText(QTextStream& stream, co
 
     QXmlStreamReader reader(xml);
     m_textFont = m_currentState.getTextFont();
+    m_currentTextLeading = m_currentState.getTextLeading();
 
     // Write the initial text state. The text state can be set outside
     // of the text object (for example, font can be selected before the BT
@@ -906,7 +907,26 @@ void PDFPageContentEditorContentStreamBuilder::writeText(QTextStream& stream, co
 
             if (m_textFont)
             {
-                writeTextWithFallback(stream, characters);
+                const QStringList lines = characters.split('\n', Qt::KeepEmptyParts);
+
+                for (qsizetype i = 0; i < lines.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        PDFReal leading = m_currentTextLeading;
+                        if (qFuzzyIsNull(leading))
+                        {
+                            leading = m_currentTextFontSize * 1.2;
+                        }
+
+                        stream << "0 " << formatNumber(-leading) << " Td" << Qt::endl;
+                    }
+
+                    if (!lines[i].isEmpty())
+                    {
+                        writeTextWithFallback(stream, lines[i]);
+                    }
+                }
             }
             else
             {
@@ -1017,6 +1037,7 @@ void PDFPageContentEditorContentStreamBuilder::writeTextCommand(QTextStream& str
         }
         else
         {
+            m_currentTextLeading = textLeading;
             stream << formatNumber(textLeading) << " TL" << Qt::endl;
         }
     }
