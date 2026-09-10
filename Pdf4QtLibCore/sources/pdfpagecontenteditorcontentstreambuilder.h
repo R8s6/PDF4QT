@@ -152,6 +152,7 @@ private:
     PDFEditorFallbackFontManager m_fallbackFontManager;
     QByteArray m_currentTextFontKey;    ///< Resource key of the last written Tf operator
     PDFReal m_currentTextFontSize = 0.0;
+    PDFReal m_currentTextLeading = 0.0;
 };
 
 }   // namespace pdf
