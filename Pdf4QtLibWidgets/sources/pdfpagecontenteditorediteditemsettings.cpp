@@ -25,6 +25,7 @@
 
 #include "pdfpagecontentelements.h"
 #include "pdfpagecontenteditorprocessor.h"
+#include "pdfalgorithmlcs.h"
 #include "pdfwidgetutils.h"
 #include "pdfpainterutils.h"
 
@@ -36,6 +37,179 @@
 
 namespace pdf
 {
+
+namespace
+{
+
+QString getPlainText(const PDFEditedPageContentElementText* textElement)
+{
+    QString text;
+    PDFPageContentProcessorState state = textElement->getState();
+    state.setStateFlags(PDFPageContentProcessorState::StateFlags());
+    PDFReal currentY = state.getTextMatrix().dy();
+    bool textStarted = false;
+
+    for (const PDFEditedPageContentElementText::Item& item : textElement->getItems())
+    {
+        if (item.isText)
+        {
+            for (const TextSequenceItem& textItem : item.textSequence.items)
+            {
+                if ((textItem.isCharacter() || textItem.isContentStream()) && !textItem.character.isNull())
+                {
+                    text += textItem.character;
+                    textStarted = true;
+                }
+            }
+        }
+        else if (item.isUpdateGraphicState)
+        {
+            PDFPageContentProcessorState newState = state;
+            newState.setStateFlags(PDFPageContentProcessorState::StateFlags());
+            newState.setState(item.state);
+
+            if (newState.getStateFlags().testFlag(PDFPageContentProcessorState::StateTextMatrix))
+            {
+                PDFReal newY = newState.getTextMatrix().dy();
+                if (textStarted && !qFuzzyIsNull(newY - currentY))
+                {
+                    text += '\n';
+                }
+                currentY = newY;
+            }
+
+            state = newState;
+            state.setStateFlags(PDFPageContentProcessorState::StateFlags());
+        }
+    }
+
+    return text;
+}
+
+QString createEditedItemsAsText(const PDFEditedPageContentElementText* textElement, const QString& newText)
+{
+    const QString oldText = getPlainText(textElement);
+    if (oldText == newText)
+    {
+        return textElement->getItemsAsText();
+    }
+
+    auto comparator = [](QChar left, QChar right) { return left == right; };
+    PDFAlgorithmLongestCommonSubsequence lcs(oldText.cbegin(), oldText.cend(), newText.cbegin(), newText.cend(), comparator);
+    lcs.perform();
+
+    const auto& sequence = lcs.getSequence();
+    std::vector<bool> keep(size_t(oldText.size()), false);
+    std::vector<QString> insertBefore(size_t(oldText.size()) + 1);
+    std::vector<size_t> nextOldIndex(sequence.size(), size_t(oldText.size()));
+
+    size_t nextIndex = size_t(oldText.size());
+    for (size_t i = sequence.size(); i > 0; --i)
+    {
+        nextOldIndex[i - 1] = nextIndex;
+        if (sequence[i - 1].isLeftValid())
+        {
+            nextIndex = sequence[i - 1].index1;
+        }
+    }
+
+    for (size_t i = 0; i < sequence.size(); ++i)
+    {
+        const auto& sequenceItem = sequence[i];
+        if (sequenceItem.isMatch())
+        {
+            keep[sequenceItem.index1] = true;
+        }
+        else if (sequenceItem.isRight())
+        {
+            insertBefore[nextOldIndex[i]] += newText.at(qsizetype(sequenceItem.index2));
+        }
+    }
+
+    QString text;
+    size_t textIndex = 0;
+    PDFPageContentProcessorState sourceState = textElement->getState();
+    sourceState.setStateFlags(PDFPageContentProcessorState::StateFlags());
+    PDFPageContentProcessorState outputState = sourceState;
+    PDFReal currentY = sourceState.getTextMatrix().dy();
+    bool textStarted = false;
+
+    auto appendInsertedText = [&text, &insertBefore](size_t index)
+    {
+        if (!insertBefore[index].isEmpty())
+        {
+            text += insertBefore[index].toHtmlEscaped();
+        }
+    };
+
+    for (const PDFEditedPageContentElementText::Item& item : textElement->getItems())
+    {
+        if (item.isText)
+        {
+            for (const TextSequenceItem& textItem : item.textSequence.items)
+            {
+                if ((textItem.isCharacter() || textItem.isContentStream()) && !textItem.character.isNull())
+                {
+                    appendInsertedText(textIndex);
+                    if (keep[textIndex])
+                    {
+                        text += QString(textItem.character).toHtmlEscaped();
+                    }
+                    ++textIndex;
+                    textStarted = true;
+                }
+                else if ((textItem.isCharacter() || textItem.isContentStream()) && textItem.cid != 0)
+                {
+                    text += QString("<character cid=\"%1\"/>").arg(textItem.cid);
+                }
+                else if (textItem.isAdvance())
+                {
+                    text += QString("<space advance=\"%1\"/>").arg(textItem.advance);
+                }
+            }
+        }
+        else if (item.isUpdateGraphicState)
+        {
+            PDFPageContentProcessorState sourceNewState = sourceState;
+            sourceNewState.setStateFlags(PDFPageContentProcessorState::StateFlags());
+            sourceNewState.setState(item.state);
+
+            PDFEditedPageContentElementText::Item outputItem = item;
+            if (sourceNewState.getStateFlags().testFlag(PDFPageContentProcessorState::StateTextMatrix))
+            {
+                PDFReal newY = sourceNewState.getTextMatrix().dy();
+                if (textStarted && !qFuzzyIsNull(newY - currentY))
+                {
+                    appendInsertedText(textIndex);
+                    if (!keep[textIndex])
+                    {
+                        PDFPageContentProcessorState::StateFlags flags = outputItem.state.getStateFlags();
+                        flags.setFlag(PDFPageContentProcessorState::StateTextMatrix, false);
+                        outputItem.state.setStateFlags(flags);
+                    }
+                    ++textIndex;
+                }
+                currentY = newY;
+            }
+
+            text += PDFEditedPageContentElementText::createItemsAsText(outputState, { outputItem });
+
+            PDFPageContentProcessorState outputNewState = outputState;
+            outputNewState.setStateFlags(PDFPageContentProcessorState::StateFlags());
+            outputNewState.setState(outputItem.state);
+            outputState = outputNewState;
+            outputState.setStateFlags(PDFPageContentProcessorState::StateFlags());
+
+            sourceState = sourceNewState;
+            sourceState.setStateFlags(PDFPageContentProcessorState::StateFlags());
+        }
+    }
+
+    appendInsertedText(textIndex);
+    return text;
+}
+
+}   // anonymous namespace
 
 PDFPageContentEditorEditedItemSettings::PDFPageContentEditorEditedItemSettings(QWidget* parent) :
     QWidget(parent),
@@ -110,8 +284,8 @@ void PDFPageContentEditorEditedItemSettings::loadFromElement(PDFPageContentEleme
     if (PDFEditedPageContentElementText* textElement = editedElement->getElement()->asText())
     {
         ui->tabWidget->addTab(ui->textTab, tr("Text"));
-        QString text = textElement->getItemsAsText();
-        ui->plainTextEdit->setPlainText(text);
+        ui->plainTextEdit->setPlainText(getPlainText(textElement));
+        ui->plainTextEdit->document()->setModified(false);
     }
 
     if (editedElement->getElement()->asText() || editedElement->getElement()->asPath())
@@ -225,10 +399,8 @@ void PDFPageContentEditorEditedItemSettings::setColorToComboBox(QComboBox* combo
     QString name = color.name(QColor::HexArgb);
 
     int index = comboBox->findData(color, Qt::UserRole, Qt::MatchExactly);
-
     if (index == -1)
     {
-        // Jakub Melka: try to find text (color name)
         index = comboBox->findText(name);
     }
 
@@ -247,9 +419,6 @@ void PDFPageContentEditorEditedItemSettings::saveToElement(PDFPageContentElement
 {
     if (PDFEditedPageContentElementImage* imageElement = editedElement->getElement()->asImage())
     {
-        // Replace the image only if the user has selected a new one. Unconditional
-        // replacement would discard the original image object and degrade (or even
-        // lose, if the original image could not be decoded) the image data.
         if (m_imageChanged)
         {
             imageElement->setImage(m_image);
@@ -259,7 +428,10 @@ void PDFPageContentEditorEditedItemSettings::saveToElement(PDFPageContentElement
 
     if (PDFEditedPageContentElementText* textElement = editedElement->getElement()->asText())
     {
-        textElement->setItemsAsText(ui->plainTextEdit->toPlainText());
+        if (ui->plainTextEdit->document()->isModified())
+        {
+            textElement->setItemsAsText(createEditedItemsAsText(textElement, ui->plainTextEdit->toPlainText()));
+        }
     }
 
     if (PDFEditedPageContentElementPath* pathElement = editedElement->getElement()->asPath())
