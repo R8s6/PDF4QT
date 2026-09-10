@@ -562,10 +562,7 @@ void EditorPlugin::onSceneEditElement(const std::set<pdf::PDFInteger>& elements)
             pdf::PDFPageContentElementEdited* editedElement = dynamic_cast<pdf::PDFPageContentElementEdited*>(clonedElement.get());
             if (editedElement->getElement()->asText())
             {
-                if (!updateTextElement(editedElement))
-                {
-                    return;
-                }
+                updateTextElement(editedElement);
             }
         }
 
