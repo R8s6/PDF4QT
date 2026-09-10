@@ -916,7 +916,7 @@ void PDFPageContentEditorContentStreamBuilder::writeText(QTextStream& stream, co
                         PDFReal leading = m_currentTextLeading;
                         if (qFuzzyIsNull(leading))
                         {
-                            leading = m_currentTextFontSize * 1.2;
+                            leading = m_currentTextFontSize;
                         }
 
                         stream << "0 " << formatNumber(-leading) << " Td" << Qt::endl;
