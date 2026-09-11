@@ -937,7 +937,6 @@ bool EditorPlugin::updateTextElement(pdf::PDFPageContentElementEdited* element)
             {
                 return false;
             }
-            targetTextElement->setState(sourceElementText->getState());
             targetTextElement->setTextPath(sourceElementText->getTextPath());
             targetTextElement->setItems(sourceElementText->getItems());
             targetTextElement->setTransform(sourceElementText->getTransform());
